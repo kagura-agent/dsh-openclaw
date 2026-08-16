@@ -13,11 +13,12 @@ import { randomBytes } from "node:crypto";
 
 const src = readFileSync(new URL("./src/index.js", import.meta.url), "utf8");
 const shim = src
-  .replace('import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";', 'const { readFileSync, readdirSync, statSync, existsSync } = await import("node:fs");')
+  .replace('import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, copyFileSync } from "node:fs";', 'const { readFileSync, readdirSync, statSync, existsSync, writeFileSync, copyFileSync } = await import("node:fs");')
   .replace('import { join, basename, dirname, relative, isAbsolute, extname } from "node:path";', 'const { join, basename, dirname, relative, isAbsolute, extname } = await import("node:path");')
   .replace('import { homedir } from "node:os";', 'const { homedir } = await import("node:os");')
   .replace('import { randomUUID } from "node:crypto";', 'import { randomUUID, createHash } from "node:crypto";')
   .replace('import { createHash } from "node:crypto";', "")
+  .replace('import { gunzipSync } from "node:zlib";', 'const { gunzipSync } = await import("node:zlib");')
   .replace("export { name, inject, apply };", "export { name, inject, apply };");
 const mod = await import("data:text/javascript;base64," + Buffer.from(shim).toString("base64"));
 const { apply } = mod;
@@ -45,6 +46,17 @@ writeFileSync(join(srcDir, "sessions", "beta.jsonl.gz"), gzipSync([
   JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: "压缩会话" }], id: "u1", timestamp: "2026-08-01T11:00:00Z" } }),
   JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "已解压" }], id: "a1", model: "claude-y", timestamp: "2026-08-01T11:00:02Z" } }),
 ].join("\n")));
+// persona core files for import-core
+writeFileSync(join(srcDir, "IDENTITY.md"), "# IDENTITY.md - Who Am I?\n\n- **Name:** Kagura\n");
+writeFileSync(join(srcDir, "SOUL.md"), "# SOUL.md\n\nBe genuinely helpful.\n");
+writeFileSync(join(srcDir, "USER.md"), "# USER.md\n\n- **Name:** Luna\n");
+writeFileSync(join(srcDir, "AGENTS.md"), "# AGENTS.md\n\nWrite it down.\n");
+writeFileSync(join(srcDir, "MEMORY.md"), "# MEMORY.md\n\n- 北极星:人类伴侣\n");
+// a fake HOME so import-core writes a scratch ~/.dsh/AGENTS.md, not the real one
+const fakeHome = join(root, "fakehome");
+mkdirSync(fakeHome, { recursive: true });
+const savedHome = process.env.HOME;
+process.env.HOME = fakeHome;
 
 // --- mock ctx ------------------------------------------------------------------
 const liveSessions = [
@@ -164,6 +176,42 @@ const call = async (path, body) => {
   check(created.length === before, "no duplicate persistence.create");
   check(r.body.failed.length === 0, "re-import has no failures");
 }
+
+// --- 6. import-core: persona files → fake ~/.dsh/AGENTS.md ---------------------
+{
+  const r = await call("/api/dsh-openclaw/import-core", {});
+  check(r.status === 200 && r.body.ok, "import-core 200");
+  check(r.body.files.length === 5, "import-core found all 5 persona files");
+  const target = join(fakeHome, ".dsh", "AGENTS.md");
+  check(existsSync(target), "wrote ~/.dsh/AGENTS.md under fake HOME");
+  const text = readFileSync(target, "utf8");
+  check(text.includes("由 dsh-openclaw 生成"), "generated marker present");
+  check(text.includes("# IDENTITY.md") && text.includes("# SOUL.md") && text.includes("# USER.md")
+    && text.includes("# AGENTS.md") && text.includes("# MEMORY.md"), "all persona sections assembled in order");
+  check(text.includes("北极星:人类伴侣"), "MEMORY.md content included");
+
+  // re-import: target already carries our marker → overwrite WITHOUT backup
+  const r2 = await call("/api/dsh-openclaw/import-core", {});
+  check(r2.status === 200 && r2.body.ok && r2.body.backedUp === false, "re-import overwrites without backup");
+
+  // a hand-edited target (no marker) → backed up before overwrite
+  const backupable = join(root, "backup-home");
+  mkdirSync(backupable, { recursive: true });
+  const oldHome = process.env.HOME;
+  process.env.HOME = backupable;
+  try {
+    const manual = join(backupable, ".dsh");
+    mkdirSync(manual, { recursive: true });
+    writeFileSync(join(manual, "AGENTS.md"), "# hand-written instructions\n");
+    const r3 = await call("/api/dsh-openclaw/import-core", {});
+    check(r3.status === 200 && r3.body.backedUp === true, "hand-edited target backed up before overwrite");
+    const backups = readdirSync(manual).filter((n) => n.startsWith("AGENTS.md.bak-"));
+    check(backups.length === 1, "one backup file created");
+  } finally {
+    process.env.HOME = oldHome;
+  }
+}
+process.env.HOME = savedHome;
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);
 rmSync(root, { recursive: true, force: true });

@@ -1,17 +1,20 @@
 // Self-test for the dsh-openclaw session converter: feed realistic
 // Claude Code SDK JSONL and check the emitted DSH event log invariants.
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const src = readFileSync(new URL("./src/index.js", import.meta.url), "utf8");
 
 // The module is a Cordis entry; we can't import it directly. Extract the
 // converter functions by evaluating a shimmed copy that exports them.
 const shim = src
-  .replace('import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";', 'const { readFileSync, readdirSync, statSync, existsSync } = await import("node:fs");')
+  .replace('import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, copyFileSync } from "node:fs";', 'const { readFileSync, readdirSync, statSync, existsSync, writeFileSync, copyFileSync } = await import("node:fs");')
   .replace('import { join, basename, dirname, relative, isAbsolute, extname } from "node:path";', 'const { join, basename, dirname, relative, isAbsolute, extname } = await import("node:path");')
   .replace('import { homedir } from "node:os";', 'const { homedir } = await import("node:os");')
   .replace('import { randomUUID } from "node:crypto";', 'import { randomUUID, createHash } from "node:crypto";')
   .replace('import { createHash } from "node:crypto";', "")
+  .replace('import { gunzipSync } from "node:zlib";', 'const { gunzipSync } = await import("node:zlib");')
   .replace("export { name, inject, apply };", "export { name, inject, apply, parseSdkLine, convertSession, renderTranscript, sdkBlocksToDsh, parseMemoryFile, buildMemoryIndex, slugify };");
 
 const mod = await import("data:text/javascript;base64," + Buffer.from(shim).toString("base64"));
@@ -82,18 +85,46 @@ const transcript = renderTranscript(records, meta.title);
 check(transcript.includes("**user**") && transcript.includes("**assistant**") && transcript.includes("**tool_result**"), "transcript has user/assistant/tool_result sections");
 
 // --- memory parsing ---------------------------------------------------------
-const mem = parseMemoryFile("/tmp/stage-repo/plugins/dsh-openclaw/README.md", 0);
-check(mem.ok === true, "readme parses as memory");
+import { writeFileSync, mkdirSync } from "node:fs";
+const memDir = join(tmpdir(), "dsh-openclaw-selftest-" + Date.now());
+mkdirSync(memDir, { recursive: true });
+const mem = parseMemoryFile(join(memDir, "README.md"), 0);
+writeFileSync(join(memDir, "README.md"), "# 测试 README\n\n内容");
+check(mem.ok === false, "absent file reports not-ok (parsed before write)");
 const memText = "---\ntitle: 测试记忆\ntags: [a, b, c]\n---\n# 标题\n\n正文内容";
-const mem2 = parseMemoryFile("/dev/stdin", 0);
-// parseMemoryFile reads from path; use a temp file instead
-import { writeFileSync } from "node:fs";
-writeFileSync("/tmp/stage-repo/.memtest.md", memText);
-const mem3 = parseMemoryFile("/tmp/stage-repo/.memtest.md", 0);
+writeFileSync(join(memDir, ".memtest.md"), memText);
+const mem3 = parseMemoryFile(join(memDir, ".memtest.md"), 0);
 check(mem3.ok && mem3.title === "测试记忆", "frontmatter title parsed");
 check(Array.isArray(mem3.tags) && mem3.tags.join(",") === "a,b,c", "frontmatter tags parsed");
 const index = buildMemoryIndex([{ title: "T1", tags: ["x"], rel: "memory/t1.md", excerpt: "first line" }]);
 check(index.includes("| T1 | x | `memory/t1.md` | first line |"), "index row rendered");
+
+// --- OpenClaw event format ----------------------------------------------------
+// OpenClaw sessions are NOT Claude Code SDK JSONL: {type:"message", id, timestamp,
+// message:{role, content}} with thinking/toolCall blocks and model on the message.
+const openclawLines = [
+  JSON.stringify({ type: "session", version: 3, id: "s1", timestamp: "2026-08-15T14:30:01.993Z", cwd: "/home/kagura/.openclaw/workspace" }),
+  JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: "2026-08-15T14:30:02.124Z", message: { role: "user", content: "你好" } }),
+  JSON.stringify({ type: "message", id: "m2", parentId: "m1", timestamp: "2026-08-15T14:30:03.000Z", message: {
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "[Reasoning redacted]", redacted: true },
+      { type: "text", text: "我来看看" },
+      { type: "toolCall", id: "call_01", name: "exec", arguments: { command: "ls" } },
+    ],
+    model: "deepseek-v4-flash", timestamp: "2026-08-15T14:30:03.000Z",
+  } }),
+  JSON.stringify({ type: "compaction", id: "c1" }),
+  JSON.stringify({ type: "model_change", id: "mc1", modelId: "deepseek-v4-flash" }),
+];
+const ocRecords = openclawLines.map(parseSdkLine).filter(Boolean);
+check(ocRecords.length === 2, "openclaw: session/compaction/model_change skipped, 2 messages parsed");
+check(ocRecords[0].role === "user" && ocRecords[0].content[0].text === "你好", "openclaw: user text parsed");
+check(ocRecords[1].model === "deepseek-v4-flash", "openclaw: model detected from message");
+check(ocRecords[1].timestamp === Date.parse("2026-08-15T14:30:03.000Z"), "openclaw: timestamp from message/raw");
+const ocEvents = convertSession(ocRecords, "session-oc", "/tmp/x").events;
+check(ocEvents.some((e) => e.type === "tool/call" && e.data.name === "exec"), "openclaw: toolCall mapped to tool/call");
+check(ocEvents.some((e) => e.type === "assistant/message" && e.data.message.content.some((b) => b.type === "reasoning")), "openclaw: thinking block mapped to reasoning");
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

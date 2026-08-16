@@ -84,7 +84,7 @@ window.__ModuleLoader__.load({
 		function OpenClawCard({ ctx }) {
 			const [open, setOpen] = react.useState(false);
 			const [sourceDir, setSourceDir] = react.useState("~/.openclaw");
-			const [busy, setBusy] = react.useState(null); // null | 'scan' | 'memories' | 'sessions'
+			const [busy, setBusy] = react.useState(null); // null | 'scan' | 'memories' | 'sessions' | 'core'
 			const [inventory, setInventory] = react.useState(null);
 			const [result, setResult] = react.useState(null); // { kind, ok, text }
 			const [showGuide, setShowGuide] = react.useState(false);
@@ -134,6 +134,7 @@ window.__ModuleLoader__.load({
 						text:
 							`记忆 ${data.memories.count} 个（${data.memories.sizeLabel}）` +
 							` · 会话 ${data.sessions.count} 个（${data.sessions.sizeLabel}）` +
+							(data.core.count > 0 ? ` · 人格核心 ${data.core.count} 个（${data.core.files.map((f) => f.name.replace(/\.md$/i, "")).join("/")}）` : "") +
 							(data.config ? ` · 配置 ${data.config.name}` : "") +
 							(data.plugins.count > 0 ? ` · 插件 ${data.plugins.count} 个（仅清单）` : "")
 					});
@@ -186,6 +187,24 @@ window.__ModuleLoader__.load({
 				setBusy(null);
 			};
 
+			const runCore = async () => {
+				setBusy("core");
+				setResult(null);
+				try {
+					const data = await post("/import-core", { sourceDir });
+					setResult({
+						kind: "ok",
+						text:
+							`导入人格核心 ${data.files.length} 个 → ${data.target}` +
+							`（${data.bytes} 字节${data.backedUp ? "，旧文件已备份" : ""}）` +
+							`\n${data.note || ""}`
+					});
+				} catch (error) {
+					setResult({ kind: "err", text: error.message });
+				}
+				setBusy(null);
+			};
+
 			const toggleGuide = async () => {
 				const next = !showGuide;
 				setShowGuide(next);
@@ -199,7 +218,7 @@ window.__ModuleLoader__.load({
 				}
 			};
 
-			const busyLabel = busy === "scan" ? "扫描中…" : busy === "memories" ? "导入记忆中…" : busy === "sessions" ? "导入会话中…" : null;
+			const busyLabel = busy === "scan" ? "扫描中…" : busy === "memories" ? "导入记忆中…" : busy === "sessions" ? "导入会话中…" : busy === "core" ? "导入人格中…" : null;
 
 			return react.createElement("li", { style: styles.li },
 				react.createElement("article", { style: styles.article },
@@ -233,6 +252,7 @@ window.__ModuleLoader__.load({
 							}),
 							react.createElement("button", { style: styles.btn, onClick: runScan, disabled: busy !== null }, "扫描")),
 						react.createElement("div", { style: styles.row },
+							react.createElement("button", { style: styles.btnPrimary, onClick: runCore, disabled: busy !== null }, "导入人格 → ~/.dsh/AGENTS.md"),
 							react.createElement("button", { style: styles.btnPrimary, onClick: runMemories, disabled: busy !== null }, "导入记忆"),
 							react.createElement("button", { style: styles.btnPrimary, onClick: runSessions, disabled: busy !== null }, "导入会话"),
 							react.createElement("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 12 } },

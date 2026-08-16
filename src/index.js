@@ -19,7 +19,7 @@
 const name = "dsh-openclaw";
 const inject = ["webServer", "sessions", "sessionQuery", "sessionPersistence", "workspaceRegistry", "fs"];
 
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
 import { join, basename, dirname, relative, isAbsolute, extname } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -34,6 +34,11 @@ const MAX_READ_BYTES = 8 * 1024 * 1024;
 const MAX_TRANSCRIPT_BYTES = 4 * 1024 * 1024;
 const MEMORY_DIR = "memory";
 const ARCHIVE_DIR = "archive/openclaw";
+
+// OpenClaw persona core files that make up the global instruction layer.
+const CORE_NAMES = ["IDENTITY.md", "SOUL.md", "USER.md", "AGENTS.md", "MEMORY.md"];
+const CORE_ORDER = ["IDENTITY.md", "SOUL.md", "USER.md", "AGENTS.md", "MEMORY.md"];
+const GENERATED_MARKER = "由 dsh-openclaw 生成";
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -211,12 +216,38 @@ function parseSdkLine(line) {
     return null;
   }
   if (raw === null || typeof raw !== "object") return null;
-  // Envelope: { type: "user"|"assistant"|"system"|"summary", message: {...} }
   const envelopeType = typeof raw.type === "string" ? raw.type : null;
+
+  // OpenClaw event log: { type: "message", id, parentId, timestamp, message: { role, content, ... } }
+  // Tool calls are `toolCall` blocks, thinking is `thinking` (field `thinking`),
+  // and model/provider/usage ride on the message object.
+  if (envelopeType === "message" && raw.message !== null && typeof raw.message === "object") {
+    const msg = raw.message;
+    const role = msg.role === "user" || msg.role === "assistant" ? msg.role : null;
+    if (!role) return null;
+    const content = Array.isArray(msg.content) ? msg.content
+      : typeof msg.content === "string" ? [{ type: "text", text: msg.content }]
+      : [];
+    const ts = typeof msg.timestamp === "string" ? Date.parse(msg.timestamp)
+      : typeof raw.timestamp === "string" ? Date.parse(raw.timestamp)
+      : NaN;
+    return {
+      envelopeType: "openclaw",
+      role,
+      content,
+      id: typeof raw.id === "string" && raw.id.length > 0 ? raw.id : (typeof msg.id === "string" && msg.id.length > 0 ? msg.id : null),
+      model: typeof msg.model === "string" ? msg.model : null,
+      timestamp: Number.isFinite(ts) ? ts : null,
+      cwd: typeof raw.cwd === "string" ? raw.cwd : null,
+      sessionId: typeof raw.sessionId === "string" ? raw.sessionId : null,
+    };
+  }
+
+  // Envelope: { type: "user"|"assistant"|"system"|"summary"|"compaction", message: {...} }
   const msg = raw && typeof raw.message === "object" && raw.message !== null ? raw.message : raw;
   const role = msg.role === "user" || msg.role === "assistant" ? msg.role : null;
   if (!role) return null;
-  if (envelopeType === "summary") return null; // model-generated compaction noise
+  if (envelopeType === "summary" || envelopeType === "compaction") return null; // model-generated compaction noise
   const content = Array.isArray(msg.content) ? msg.content : typeof msg.content === "string" ? [{ type: "text", text: msg.content }] : [];
   const id = typeof msg.id === "string" && msg.id.length > 0 ? msg.id : null;
   const model = typeof msg.model === "string" ? msg.model : null;
@@ -233,7 +264,7 @@ function parseSdkLine(line) {
   };
 }
 
-/** Normalize an SDK content block into DSH content blocks; returns {blocks, toolUses}. */
+/** Normalize an SDK/OpenClaw content block into DSH content blocks; returns {blocks, toolUses}. */
 function sdkBlocksToDsh(blocks, toolCallIndex) {
   const out = [];
   const toolUses = [];
@@ -243,14 +274,20 @@ function sdkBlocksToDsh(blocks, toolCallIndex) {
     if (type === "text") {
       if (typeof block.text === "string" && block.text.length > 0) out.push({ type: "text", text: block.text });
     } else if (type === "thinking" || type === "reasoning") {
-      if (typeof block.text === "string" && block.text.length > 0) out.push({ type: "reasoning", text: block.text });
-    } else if (type === "tool_use" || type === "tool-call") {
+      // Claude SDK uses `text`; OpenClaw uses `thinking` (often redacted).
+      const text = typeof block.text === "string" ? block.text : typeof block.thinking === "string" ? block.thinking : "";
+      if (text.length > 0) out.push({ type: "reasoning", text });
+    } else if (type === "toolCall" || type === "tool-call" || type === "tool_use") {
       const callId = String(block.id || `toolu_${toolCallIndex}`);
       toolCallIndex += 1;
-      const args = block.input !== void 0 ? JSON.stringify(block.input) : "{}";
+      const args = block.arguments !== void 0
+        ? JSON.stringify(block.arguments)
+        : block.input !== void 0
+          ? JSON.stringify(block.input)
+          : "{}";
       out.push({ type: "tool-call", id: callId, name: String(block.name || "tool"), arguments: args });
       toolUses.push({ callId, name: String(block.name || "tool"), arguments: args });
-    } else if (type === "tool_result" || type === "tool-result") {
+    } else if (type === "toolResult" || type === "tool_result" || type === "tool-result") {
       out.push(sdkToolResultToDsh(block));
     } else {
       // unknown block: keep its JSON as text so nothing is silently lost
@@ -262,12 +299,14 @@ function sdkBlocksToDsh(blocks, toolCallIndex) {
 }
 
 function sdkToolResultToDsh(block) {
-  const toolCallId = String(block.tool_use_id || block.toolCallId || "");
+  const toolCallId = String(block.tool_use_id || block.toolCallId || block.id || "");
   const inner = Array.isArray(block.content)
     ? block.content
     : typeof block.content === "string"
       ? [{ type: "text", text: block.content }]
-      : [];
+      : block.result !== void 0
+        ? [{ type: "text", text: typeof block.result === "string" ? block.result : JSON.stringify(block.result) }]
+        : [];
   const content = inner
     .map((c) => {
       if (c && c.type === "text" && typeof c.text === "string") return { type: "text", text: c.text };
@@ -342,7 +381,7 @@ function convertSession(records, sessionId, fallbackCwd) {
     if (t !== null) bumpTime(t);
 
     if (record.role === "user") {
-      const hasToolResult = record.content.some((b) => b && (b.type === "tool_result" || b.type === "tool-result"));
+      const hasToolResult = record.content.some((b) => b && (b.type === "tool_result" || b.type === "tool-result" || b.type === "toolResult"));
       if (hasToolResult) {
         // Tool results belong to the open step (or open a synthetic one).
         if (!openStep) {
@@ -479,7 +518,7 @@ function renderTranscript(records, title) {
       const text = textOfBlocks(record.content);
       if (text) lines.push(`**assistant**${record.model ? ` · ${record.model}` : ""}`, "", text, "");
     } else if (record.role === "user") {
-      const hasToolResult = record.content.some((b) => b && (b.type === "tool_result" || b.type === "tool-result"));
+      const hasToolResult = record.content.some((b) => b && (b.type === "tool_result" || b.type === "tool-result" || b.type === "toolResult"));
       if (hasToolResult) {
         for (const block of record.content) {
           if (block && (block.type === "tool_result" || block.type === "tool-result")) {
@@ -507,17 +546,40 @@ function scanSource(sourceDir) {
     sourceDir: dir,
     exists: existsSync(dir) && statSync(dir).isDirectory(),
     memories: { count: 0, sizeBytes: 0, truncated: false },
+    core: { count: 0, files: [] },
     sessions: { count: 0, sizeBytes: 0, truncated: false, unsupported: [] },
     config: null,
     plugins: { count: 0, dirs: [] },
   };
   if (!report.exists) return report;
 
+  // Daily notes live under `memories/` (exported) or `memory/` (workspace core).
   const memoriesState = { truncated: false };
-  const memoryFiles = listFilesRecursive(join(dir, "memories"), (n) => /\.md$/i.test(n), MAX_SCAN_FILES, memoriesState);
+  const memoryFiles = [
+    ...listFilesRecursive(join(dir, "memories"), (n) => /\.md$/i.test(n), MAX_SCAN_FILES, memoriesState),
+    ...listFilesRecursive(join(dir, "memory"), (n) => /\.md$/i.test(n), MAX_SCAN_FILES, {}),
+  ];
   report.memories.count = memoryFiles.length;
   report.memories.sizeBytes = memoryFiles.reduce((sum, f) => sum + f.size, 0);
   report.memories.truncated = memoriesState.truncated;
+
+  // Persona core files (IDENTITY/SOUL/USER/AGENTS/MEMORY) — found at the
+  // source root or one level down (workspace/, openclaw-core/).
+  const coreFiles = [];
+  for (const name of CORE_NAMES) {
+    for (const candidate of [join(dir, name), join(dir, "workspace", name), join(dir, "core", name), join(dir, "openclaw-core", name)]) {
+      try {
+        if (existsSync(candidate) && statSync(candidate).isFile()) {
+          coreFiles.push({ name, path: candidate, size: statSync(candidate).size });
+          break;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  report.core.count = coreFiles.length;
+  report.core.files = coreFiles.map((f) => ({ name: f.name, size: f.size }));
 
   const sessionsState = { truncated: false };
   const sessionFiles = listFilesRecursive(join(dir, "sessions"), (n) => /\.jsonl$/i.test(n) || /\.jsonl\.gz$/i.test(n), MAX_SCAN_FILES, sessionsState);
@@ -556,6 +618,57 @@ function scanSource(sourceDir) {
     }
   }
   return report;
+}
+
+// ---------------------------------------------------------------------------
+// persona core import: OpenClaw workspace identity files → ~/.dsh/AGENTS.md
+// ---------------------------------------------------------------------------
+
+/** Locate persona core files under a source dir (root or one level down). */
+function locateCoreFiles(sourceDir) {
+  const found = [];
+  for (const name of CORE_NAMES) {
+    for (const candidate of [join(sourceDir, name), join(sourceDir, "workspace", name), join(sourceDir, "core", name), join(sourceDir, "openclaw-core", name)]) {
+      try {
+        if (existsSync(candidate) && statSync(candidate).isFile()) {
+          found.push({ name, path: candidate, size: statSync(candidate).size });
+          break;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return found;
+}
+
+/** Assemble the global instruction file from persona core files. */
+function assembleCore(files) {
+  const parts = [
+    "# Kagura — DeepSeek Harness 人格与操作档案",
+    "",
+    `> ${GENERATED_MARKER}（2026-08-16）。内容源自 OpenClaw workspace 的 ` +
+      "IDENTITY.md / SOUL.md / USER.md / AGENTS.md / MEMORY.md，按原样合并。",
+    "",
+    "> **DSH 环境适配**：下文提到的 OpenClaw 专属机制在本环境不存在，对应行为改为：",
+    "> - `memory_search` / `memory_get` → 用 Read 工具读工作区 `memory/` 目录与 `memory/index.md`",
+    "> - dreaming / heartbeat / cron / memoryFlush → 无后台任务；由会话内 agent 主动把新共识写进本文件或 `memory/` 日记",
+    "> - 飞书 / Discord 消息 → 本环境为 DSH Web GUI；与人类（Luna）的交互发生在会话内",
+    "> - 其余指令（人格、边界、记忆纪律、打工纪律等）原样有效。",
+    "",
+  ];
+  for (const name of CORE_ORDER) {
+    const f = files.find((x) => x.name === name);
+    if (!f) continue;
+    parts.push(`<!-- ============ ${name} ============ -->`);
+    try {
+      parts.push(readFileSync(f.path, "utf8").trimEnd());
+    } catch (error) {
+      parts.push(`<!-- ${name}: unreadable: ${error instanceof Error ? error.message : String(error)} -->`);
+    }
+    parts.push("");
+  }
+  return parts.join("\n") + "\n";
 }
 
 /**
@@ -621,6 +734,7 @@ function apply(ctx, config) {
     { path: `${API_PREFIX}/scan`, handler: scan },
     { path: `${API_PREFIX}/import-memories`, handler: importMemories },
     { path: `${API_PREFIX}/import-sessions`, handler: importSessions },
+    { path: `${API_PREFIX}/import-core`, handler: importCore },
     { path: `${API_PREFIX}/guide`, handler: guide },
   ];
   for (const route of routes) {
@@ -905,6 +1019,60 @@ function apply(ctx, config) {
       failed,
       requested: files.length,
       note: "导入的会话由 sessionPersistence 写入；Web 会话列表只显示当前活跃会话，导入的历史会话不自动出现（见 README「已知限制」）。",
+    });
+  }
+
+  /**
+   * Import the persona core (IDENTITY/SOUL/USER/AGENTS/MEMORY) into the GLOBAL
+   * instruction layer ~/.dsh/AGENTS.md — the DSH equivalent of OpenClaw's
+   * per-session bootstrap files, injected into every workspace's sessions.
+   */
+  async function importCore(ctx, req, res) {
+    const body = await readJsonBody(req).catch(() => null);
+    const sourceDir = body !== null && typeof body.sourceDir === "string" && body.sourceDir.length > 0 ? body.sourceDir : defaultSourceDir;
+    const report = scanSource(sourceDir);
+    if (!report.exists) {
+      sendJson(res, 400, { ok: false, error: `source directory not found: ${report.sourceDir}` });
+      return;
+    }
+    const found = locateCoreFiles(report.sourceDir);
+    if (found.length === 0) {
+      sendJson(res, 400, { ok: false, error: "no persona core files found (expected IDENTITY.md / SOUL.md / USER.md / AGENTS.md / MEMORY.md)" });
+      return;
+    }
+
+    const target = join(expandHome("~/.dsh"), "AGENTS.md");
+    let backedUp = false;
+    try {
+      if (existsSync(target)) {
+        const existing = readFileSync(target, "utf8");
+        if (!existing.includes(GENERATED_MARKER)) {
+          const backupPath = `${target}.bak-${Date.now()}`;
+          copyFileSync(target, backupPath);
+          backedUp = true;
+        }
+      }
+    } catch (error) {
+      /* backup is best-effort */
+    }
+
+    const assembled = assembleCore(found);
+    try {
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, assembled);
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: `cannot write ${target}: ${error instanceof Error ? error.message : String(error)}` });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      sourceDir: report.sourceDir,
+      target,
+      files: found.map((f) => ({ name: f.name, size: f.size })),
+      bytes: assembled.length,
+      backedUp,
+      note: "已写入 DSH 全局指令层 ~/.dsh/AGENTS.md；新会话将自动注入（当前会话在下一次文件操作后生效）。",
     });
   }
 
