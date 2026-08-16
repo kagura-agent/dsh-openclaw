@@ -24,6 +24,7 @@ import { join, basename, dirname, relative, isAbsolute, extname } from "node:pat
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 
 const API_PREFIX = "/api/dsh-openclaw";
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
@@ -119,8 +120,10 @@ function firstLine(text) {
 
 function slugify(name) {
   const base = name.replace(/\.md$/i, "");
+  // Keep CJK and word chars; everything else becomes "-". A fully non-word
+  // name (e.g. "###") falls back to "memory" rather than an empty slug.
   const slug = base
-    .replace(/[^\w.\-]+/g, "-")
+    .replace(/[^\w.\-\u4e00-\u9fff]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
   return (slug || "memory") + ".md";
@@ -308,6 +311,9 @@ function convertSession(records, sessionId, fallbackCwd) {
   let toolCallIndex = 0;
   let title = null;
   let firstUserText = null;
+  // Pre-scan the first assistant model so the request/header emitted at the
+  // first human prompt already carries the real model instead of the default.
+  const firstModel = records.find((r) => r.role === "assistant" && r.model)?.model || null;
 
   const push = (type, data, surface) => {
     const event = { type, seq: seq++, time: lastTime, data };
@@ -392,7 +398,7 @@ function convertSession(records, sessionId, fallbackCwd) {
         id: record.id || randomUUID(),
       }, true);
       if (!headerEmitted) {
-        push("request/header", { header: { config: { provider: "openclaw", model: detectedModel || "claude" } }, reason: "initial" });
+        push("request/header", { header: { config: { provider: "openclaw", model: firstModel || detectedModel || "claude" } }, reason: "initial" });
         headerEmitted = true;
       }
       push("step/start", { turn, step });
@@ -552,19 +558,31 @@ function scanSource(sourceDir) {
   return report;
 }
 
-function resolveCwdForImport(ctx, sourceCwd) {
-  const cwd = typeof sourceCwd === "string" && sourceCwd.length > 0 ? sourceCwd : null;
-  if (cwd !== null && existsSync(cwd) && statSync(cwd).isDirectory()) return cwd;
-  // fall back to the current session's workspace
+/**
+ * Resolve the workspace cwd for an import, in priority order:
+ *   1. the live session named by the request (`sessionId`) — the web card
+ *      passes its own session, so imports land in the workspace the user is
+ *      actually working in (not `sessions.list()[0]`, which is the OLDEST
+ *      live session and often a different workspace);
+ *   2. a source cwd from the transcript, when that path exists on this machine;
+ *   3. any stored session's cwd (best effort), else the first live session's
+ *      cwd, else null (caller decides how to fail).
+ */
+function resolveCwdForImport(ctx, sourceCwd, requestedSessionId) {
   const sessions = ctx.get("sessions");
-  const sessionQuery = ctx.get("sessionQuery");
-  if (sessions !== void 0) {
-    const list = sessions.list();
-    if (list.length > 0) {
-      const header = list[0].header;
+  if (typeof requestedSessionId === "string" && requestedSessionId.length > 0 && sessions !== void 0) {
+    try {
+      const session = sessions.get(requestedSessionId);
+      const header = session && typeof session.header === "object" && session.header !== null ? session.header : null;
       if (header && typeof header.cwd === "string") return header.cwd;
+    } catch {
+      /* unknown/expired session id — fall through */
     }
   }
+  const cwd = typeof sourceCwd === "string" && sourceCwd.length > 0 ? sourceCwd : null;
+  if (cwd !== null && existsSync(cwd) && statSync(cwd).isDirectory()) return cwd;
+  // fall back to any stored session's cwd
+  const sessionQuery = ctx.get("sessionQuery");
   if (sessionQuery !== void 0) {
     // best effort: any stored session's cwd
     try {
@@ -576,6 +594,13 @@ function resolveCwdForImport(ctx, sourceCwd) {
       }
     } catch {
       /* ignore */
+    }
+  }
+  if (sessions !== void 0) {
+    const list = sessions.list();
+    if (list.length > 0) {
+      const header = list[0].header;
+      if (header && typeof header.cwd === "string") return header.cwd;
     }
   }
   return null;
@@ -635,12 +660,8 @@ function apply(ctx, config) {
       sendJson(res, 500, { ok: false, error: "fs service unavailable" });
       return;
     }
-    const sessions = ctx.get("sessions");
-    let cwd = null;
-    if (sessions !== void 0) {
-      const list = sessions.list();
-      if (list.length > 0 && list[0].header && typeof list[0].header.cwd === "string") cwd = list[0].header.cwd;
-    }
+    const requestedSessionId = body !== null && typeof body.sessionId === "string" && body.sessionId.length > 0 ? body.sessionId : null;
+    const cwd = resolveCwdForImport(ctx, null, requestedSessionId);
     if (cwd === null) {
       sendJson(res, 400, { ok: false, error: "no active session workspace" });
       return;
@@ -715,6 +736,7 @@ function apply(ctx, config) {
     sendJson(res, 200, {
       ok: true,
       sourceDir: report.sourceDir,
+      cwd,
       targetDir: targetRel,
       imported: imported.length,
       skipped: skipped.length,
@@ -741,6 +763,7 @@ function apply(ctx, config) {
     const fs = ctx.get("fs");
     const requested = body !== null && Array.isArray(body.sessionIds) ? body.sessionIds.map(String).filter(Boolean) : null;
     const asTranscript = body !== null && body.asTranscript === true;
+    const requestedSessionId = body !== null && typeof body.sessionId === "string" && body.sessionId.length > 0 ? body.sessionId : null;
 
     const allFiles = listFilesRecursive(join(report.sourceDir, "sessions"), (n) => /\.jsonl$/i.test(n) || /\.jsonl\.gz$/i.test(n), MAX_SCAN_FILES, {});
     let files = allFiles;
@@ -750,18 +773,25 @@ function apply(ctx, config) {
     }
     files = files.slice(0, maxSessions);
 
+    // Idempotent re-import: sessions whose id is already persisted are skipped
+    // (the backend is append-only; there is no overwrite/delete).
+    let existingIds = new Set();
+    try {
+      const headers = await persistence.list();
+      for (const h of headers) existingIds.add(h.id);
+    } catch {
+      /* listing is best-effort; without it a duplicate create is reported as a failure */
+    }
+
     const imported = [];
+    const skipped = [];
     const failed = [];
     let sessionIndex = 0;
     let archiveCwd = null;
     let archiveTarget = null;
 
     if (asTranscript && fs !== void 0) {
-      const sessions = ctx.get("sessions");
-      if (sessions !== void 0) {
-        const list = sessions.list();
-        if (list.length > 0 && list[0].header && typeof list[0].header.cwd === "string") archiveCwd = list[0].header.cwd;
-      }
+      archiveCwd = resolveCwdForImport(ctx, null, requestedSessionId);
       if (archiveCwd !== null) {
         try {
           archiveTarget = await fs.resolve(ARCHIVE_DIR, { cwd: archiveCwd });
@@ -774,8 +804,9 @@ function apply(ctx, config) {
     for (const file of files) {
       let records = [];
       try {
-        const raw = readFileSync(file.path, "utf8").slice(0, MAX_READ_BYTES);
-        for (const line of raw.split("\n")) {
+        const raw = readFileSync(file.path);
+        const text = /\.gz$/i.test(file.path) ? gunzipSync(raw).toString("utf8") : raw.toString("utf8");
+        for (const line of text.slice(0, MAX_READ_BYTES).split("\n")) {
           const parsed = parseSdkLine(line);
           if (parsed !== null) records.push(parsed);
         }
@@ -791,7 +822,11 @@ function apply(ctx, config) {
       const sourceSessionId = records.find((r) => r.sessionId)?.sessionId || basename(file.path, extname(file.path));
       const id = `session-openclaw-${createHash("sha1").update(file.path).digest("hex").slice(0, 8)}-${sessionIndex}`;
       sessionIndex += 1;
-      const fallbackCwd = resolveCwdForImport(ctx, records.find((r) => r.cwd)?.cwd || null);
+      if (existingIds.has(id)) {
+        skipped.push({ name: file.name, id, reason: "already imported (re-run skips duplicates)" });
+        continue;
+      }
+      const fallbackCwd = resolveCwdForImport(ctx, records.find((r) => r.cwd)?.cwd || null, requestedSessionId);
       if (fallbackCwd === null) {
         failed.push({ name: file.name, error: "no workspace cwd available" });
         continue;
@@ -819,6 +854,7 @@ function apply(ctx, config) {
           delegationDepth: 0,
         });
         await persistence.append(id, converted.events);
+        existingIds.add(id);
       } catch (error) {
         failed.push({ name: file.name, error: `persist failed: ${error instanceof Error ? error.message : String(error)}` });
         continue;
@@ -863,10 +899,12 @@ function apply(ctx, config) {
     sendJson(res, 200, {
       ok: true,
       sourceDir: report.sourceDir,
+      cwd: resolveCwdForImport(ctx, null, requestedSessionId),
       imported,
+      skipped,
       failed,
       requested: files.length,
-      note: "导入的会话由 sessionPersistence 写入；若新会话未立即出现在 Web 会话列表，刷新页面即可。",
+      note: "导入的会话由 sessionPersistence 写入；Web 会话列表只显示当前活跃会话，导入的历史会话不自动出现（见 README「已知限制」）。",
     });
   }
 
@@ -877,7 +915,7 @@ function apply(ctx, config) {
       "   b) 直接打包数据目录： tar czf openclaw-export.tgz -C ~ .openclaw",
       "2. 把 openclaw-export.tgz（或解压出的目录）传输到本机（scp/rsync/U盘/网盘均可）。",
       "3. 在本插件卡片把「源目录」指向该目录（默认 ~/.openclaw），点「扫描」→「导入」。",
-      "提示：OpenClaw 会话为 .jsonl（Claude Code SDK 格式）；.jsonl.zstd 会话当前不导入（见 README 限制）。",
+      "提示：OpenClaw 会话为 .jsonl（Claude Code SDK 格式）；.jsonl.gz 可直接导入，.jsonl.zstd 当前不导入（见 README 限制）。",
     ];
     sendJson(res, 200, { ok: true, steps, defaultSourceDir });
   }

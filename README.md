@@ -8,9 +8,11 @@
 | 内容 | 迁移后去向 | 保真度 |
 |------|-----------|--------|
 | 记忆（`memories/*.md`） | 当前工作区 `memory/*.md` + 自动生成的 `memory/index.md` 索引 | 无损（本质就是 Markdown） |
-| 会话（`sessions/*.jsonl`，Claude Code SDK 格式） | DSH 原生会话日志（`sessionPersistence` 写入），Web 会话列表可见 | 文本消息 100%；工具调用尽量映射；token 用量/推理内容不还原 |
+| 会话（`sessions/*.jsonl`，Claude Code SDK 格式） | DSH 原生会话日志（`sessionPersistence` 写入），查询引擎可检索 | 文本消息 100%；工具调用尽量映射；token 用量/推理内容不还原 |
 | 会话（可选 Markdown 存档） | 工作区 `archive/openclaw/*.md` | 人读全文 |
 | 配置 / 插件 | 仅扫描报告，不迁移（格式不通用） | — |
+
+> 会话导入后落在持久化存储（`~/.dsh/sessions/…`），Web 会话列表只显示**当前活跃会话**，导入的历史会话不会自动出现（见[已知限制](#已知限制)）。
 
 ## 安装
 
@@ -61,18 +63,21 @@ tar czf openclaw-export.tgz -C ~ .openclaw
 
 - **记忆**：解析 Markdown（含 frontmatter 的 `title`/`tags`，缺失时回退到首个 H1/文件名），
   经 dsh `fs` 服务写入工作区（尊重工作区路径规则）。
-- **会话**：逐行解析 SDK 风格 JSONL（`{type, message}` 信封或裸消息对象都支持），
+- **会话**：逐行解析 SDK 风格 JSONL（`{type, message}` 信封或裸消息对象都支持；`.jsonl.gz` 自动解压），
   把 `tool_use`/`tool_result` 映射为 DSH 的 `tool-call`/`tool-result` 块，
   生成连续的 typed 事件日志（`turn/start` … `turn/end`），经
-  `ctx.sessionPersistence.create/append` 写入——查询引擎会自动摄入，Web 会话列表可见。
-  原 cwd 在本机存在时保留（自动归入对应工作区），否则落到当前会话工作区。
+  `ctx.sessionPersistence.create/append` 写入——查询引擎按目录扫描自动发现。
+  落点工作区按优先级取：卡片所在会话的工作区（浏览器自动携带）→ 原 cwd（本机存在时）
+  → 任意已存会话的工作区 → 当前会话工作区。
 
 ## 已知限制
 
-- **`.jsonl.zstd` 会话不导入**（扫描会报告但跳过）；请先在 OpenClaw 侧导出为普通 `.jsonl`。
+- **`.jsonl.zstd` 会话不导入**（扫描会报告但跳过）；`.jsonl.gz` 支持导入，普通 `.jsonl` 无需处理。
 - 会话导入是**有损转换**：token 用量、模型推理细节、图片附件不还原；续聊时 DSH 使用当前配置的模型。
+- 导入的会话**不会自动出现在 Web 会话列表**：列表只显示当前活跃会话，导入的会话只进入持久化存储，
+  供查询引擎检索；若部署提供历史/恢复入口可从那里加载。
+- 重复导入同一目录是**幂等**的：已导入过的会话会跳过（后端是 append-only，不支持覆盖）。
 - 单次导入上限：记忆 1000 条、会话 200 个（`maxSessionsPerImport` 可调）。
-- 导入的会话若未立即出现在会话列表，刷新页面即可（查询引擎摄入是异步的）。
 
 ## 开发
 

@@ -12,10 +12,10 @@ const shim = src
   .replace('import { homedir } from "node:os";', 'const { homedir } = await import("node:os");')
   .replace('import { randomUUID } from "node:crypto";', 'import { randomUUID, createHash } from "node:crypto";')
   .replace('import { createHash } from "node:crypto";', "")
-  .replace("export { name, inject, apply };", "export { name, inject, apply, parseSdkLine, convertSession, renderTranscript, sdkBlocksToDsh, parseMemoryFile, buildMemoryIndex };");
+  .replace("export { name, inject, apply };", "export { name, inject, apply, parseSdkLine, convertSession, renderTranscript, sdkBlocksToDsh, parseMemoryFile, buildMemoryIndex, slugify };");
 
 const mod = await import("data:text/javascript;base64," + Buffer.from(shim).toString("base64"));
-const { parseSdkLine, convertSession, renderTranscript, parseMemoryFile, buildMemoryIndex } = mod;
+const { parseSdkLine, convertSession, renderTranscript, parseMemoryFile, buildMemoryIndex, slugify } = mod;
 
 let failures = 0;
 const check = (cond, label) => {
@@ -63,6 +63,15 @@ check(toolResult && toolResult.data.message.content[0].type === "tool-result", "
 check(meta.model === "claude-sonnet-4-5", "model detected");
 check(meta.cwd === "/home/me/proj", "cwd detected");
 check(meta.title.includes("请列出"), "title from first user text");
+
+// request/header carries the pre-scanned model, not the default placeholder
+const header = events.find((e) => e.type === "request/header");
+check(header && header.data.header.config.model === "claude-sonnet-4-5", "request/header uses pre-scanned model");
+
+// --- slugify keeps CJK ------------------------------------------------------
+check(slugify("项目约定.md") === "项目约定.md", "slugify keeps CJK filename");
+check(slugify("Preferences.md") === "Preferences.md", "slugify keeps ascii filename");
+check(slugify("###.md") === "memory.md", "slugify falls back on non-word name");
 
 // two human prompts → two turns
 const turnStarts = events.filter((e) => e.type === "turn/start").length;

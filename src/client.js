@@ -13,7 +13,7 @@ window.__ModuleLoader__.load({
 		var react = require("react");
 
 		const name = "dsh-openclaw-client";
-		const inject = ["slots"];
+		const inject = ["slots", "sessions"];
 
 		const API = "/api/dsh-openclaw";
 		const styles = {
@@ -81,7 +81,7 @@ window.__ModuleLoader__.load({
 			muted: { color: "#8a94a3", fontSize: 12 }
 		};
 
-		function OpenClawCard() {
+		function OpenClawCard({ ctx }) {
 			const [open, setOpen] = react.useState(false);
 			const [sourceDir, setSourceDir] = react.useState("~/.openclaw");
 			const [busy, setBusy] = react.useState(null); // null | 'scan' | 'memories' | 'sessions'
@@ -91,12 +91,30 @@ window.__ModuleLoader__.load({
 			const [guide, setGuide] = react.useState(null);
 			const [asTranscript, setAsTranscript] = react.useState(true);
 
+			// The id of the session this card is running in, so imports land in
+			// THIS session's workspace (the host falls back to a heuristic when
+			// absent, e.g. for direct API calls without a browser session).
+			const currentSessionId = () => {
+				try {
+					const sessions = ctx && typeof ctx.get === "function" ? ctx.get("sessions") : void 0;
+					if (sessions && sessions.currentProvideInfo) {
+						const info = sessions.currentProvideInfo.getSnapshot();
+						if (info && info.sessionId) return info.sessionId;
+					}
+				} catch {
+					/* ignore — host-side fallback applies */
+				}
+				return null;
+			};
+
 			const post = async (path, payload) => {
+				const sessionId = currentSessionId();
+				const body = sessionId !== null ? { ...payload, sessionId } : payload;
 				const res = await fetch(API + path, {
 					method: "POST",
 					credentials: "same-origin",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify(payload)
+					body: JSON.stringify(body)
 				});
 				const data = await res.json().catch(() => ({}));
 				if (!res.ok || !data.ok) {
@@ -134,7 +152,7 @@ window.__ModuleLoader__.load({
 					setResult({
 						kind: "ok",
 						text:
-							`导入记忆 ${data.imported} 条 → ${data.targetDir}/（索引${data.indexWrote ? "已生成" : "生成失败"}）` +
+							`导入记忆 ${data.imported} 条 → ${data.cwd || ""}/${data.targetDir}/（索引${data.indexWrote ? "已生成" : "生成失败"}）` +
 							(data.skipped > 0 ? `，跳过 ${data.skipped} 条` : "") +
 							(data.failed.length > 0 ? `\n失败 ${data.failed.length} 条：\n${failures}` : "")
 					});
@@ -155,8 +173,10 @@ window.__ModuleLoader__.load({
 						kind: "ok",
 						text:
 							`导入会话 ${data.imported.length} 个` +
+							(data.skipped.length > 0 ? `，跳过 ${data.skipped.length} 个（已导入过）` : "") +
 							(data.failed.length > 0 ? `，失败 ${data.failed.length} 个` : "") +
 							(data.imported.length > 0 ? `\n${first}${data.imported.length > 5 ? "\n…" : ""}` : "") +
+							(data.skipped.length > 0 ? `\n已跳过：${data.skipped.map((s) => s.name).join(", ")}` : "") +
 							(data.failed.length > 0 ? `\n失败详情：\n${failures}` : "") +
 							`\n${data.note || ""}`
 					});
@@ -244,7 +264,7 @@ window.__ModuleLoader__.load({
 			if (slots === void 0) return;
 			slots.inject("settings.plugin.item", () => slots.register(
 				{ name: "settings.plugin.item", id: "dsh-openclaw", order: 40, label: "dsh-openclaw" },
-				() => react.createElement(OpenClawCard)
+				() => react.createElement(OpenClawCard, { ctx })
 			));
 		}
 
