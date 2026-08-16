@@ -1023,7 +1023,7 @@ function apply(ctx, config) {
       skipped,
       failed,
       requested: files.length,
-      note: "导入的会话由 sessionPersistence 写入；Web 会话列表只显示当前活跃会话，导入的历史会话不自动出现（见 README「已知限制」）。",
+      note: "Sessions are persisted via sessionPersistence; the Web session list only shows live sessions, imported history does not appear there automatically (see README \u2018Known limitations\u2019).",
     });
   }
 
@@ -1077,7 +1077,7 @@ function apply(ctx, config) {
       files: found.map((f) => ({ name: f.name, size: f.size })),
       bytes: assembled.length,
       backedUp,
-      note: "已写入 DSH 全局指令层 ~/.dsh/AGENTS.md；新会话将自动注入（当前会话在下一次文件操作后生效）。",
+      note: "Written to the DSH global instruction layer ~/.dsh/AGENTS.md; new sessions inject it automatically (the current session picks it up after its next file operation).",
     });
   }
 
@@ -1140,12 +1140,12 @@ function apply(ctx, config) {
 
   async function guide(ctx, req, res) {
     const steps = [
-      "1. 在 OpenClaw 机器上导出（任选其一）：",
-      "   a) openclaw memories export   （若有该子命令）",
-      "   b) 直接打包数据目录： tar czf openclaw-export.tgz -C ~ .openclaw",
-      "2. 把 openclaw-export.tgz（或解压出的目录）传输到本机（scp/rsync/U盘/网盘均可）。",
-      "3. 在本插件卡片把「源目录」指向该目录（默认 ~/.openclaw），点「扫描」→「导入」。",
-      "提示：OpenClaw 会话为 .jsonl（Claude Code SDK 格式）；.jsonl.gz 可直接导入，.jsonl.zstd 当前不导入（见 README 限制）。",
+      "1. On the OpenClaw machine, export (pick one):",
+      "   a) openclaw memories export   (if the subcommand exists)",
+      "   b) tar the data directory: tar czf openclaw-export.tgz -C ~ .openclaw",
+      "2. Transfer openclaw-export.tgz (or its extracted directory) to this machine (scp/rsync/USB/cloud drive all work).",
+      "3. Point the card's source directory at it (default ~/.openclaw), then Scan -> Import.",
+      "Note: OpenClaw sessions are .jsonl (OpenClaw event or Claude Code SDK format); .jsonl.gz imports directly, .jsonl.zstd is not imported (see README limitations).",
     ];
     sendJson(res, 200, { ok: true, steps, defaultSourceDir });
   }
