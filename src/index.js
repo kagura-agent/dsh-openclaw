@@ -793,7 +793,11 @@ function apply(ctx, config) {
       return;
     }
 
-    const memoryFiles = listFilesRecursive(join(report.sourceDir, "memories"), (n) => /\.md$/i.test(n), MAX_SCAN_FILES, {});
+    // Daily notes may live under `memories/` (exported) or `memory/` (workspace core).
+    const memoryFiles = [
+      ...listFilesRecursive(join(report.sourceDir, "memories"), (n) => /\.md$/i.test(n), MAX_SCAN_FILES, {}),
+      ...listFilesRecursive(join(report.sourceDir, "memory"), (n) => /\.md$/i.test(n), MAX_SCAN_FILES, {}),
+    ];
     const imported = [];
     const skipped = [];
     const failed = [];
