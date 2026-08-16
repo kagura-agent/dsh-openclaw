@@ -732,6 +732,7 @@ function apply(ctx, config) {
 
   const routes = [
     { path: `${API_PREFIX}/scan`, handler: scan },
+    { path: `${API_PREFIX}/status`, handler: status },
     { path: `${API_PREFIX}/import-memories`, handler: importMemories },
     { path: `${API_PREFIX}/import-sessions`, handler: importSessions },
     { path: `${API_PREFIX}/import-core`, handler: importCore },
@@ -1078,6 +1079,63 @@ function apply(ctx, config) {
       backedUp,
       note: "已写入 DSH 全局指令层 ~/.dsh/AGENTS.md；新会话将自动注入（当前会话在下一次文件操作后生效）。",
     });
+  }
+
+  /**
+   * Migration completion status for a source dir: what has already been
+   * imported (persona core → ~/.dsh/AGENTS.md, daily notes → workspace
+   * memory/, sessions → sessionPersistence) vs. what the source contains.
+   */
+  async function status(ctx, req, res) {
+    const body = await readJsonBody(req).catch(() => null);
+    const sourceDir = body !== null && typeof body.sourceDir === "string" && body.sourceDir.length > 0 ? body.sourceDir : defaultSourceDir;
+    const requestedSessionId = body !== null && typeof body.sessionId === "string" && body.sessionId.length > 0 ? body.sessionId : null;
+    const report = scanSource(sourceDir);
+    const out = { ok: true, sourceDir: report.sourceDir };
+
+    // persona core: imported when ~/.dsh/AGENTS.md carries our marker
+    const agentsPath = join(expandHome("~/.dsh"), "AGENTS.md");
+    let coreImported = false;
+    try {
+      coreImported = existsSync(agentsPath) && readFileSync(agentsPath, "utf8").includes(GENERATED_MARKER);
+    } catch {
+      /* treat unreadable as not imported */
+    }
+    out.core = { imported: coreImported, total: report.core.count, target: agentsPath };
+
+    // daily notes: count markdown files in the requesting session's workspace memory/
+    const cwd = resolveCwdForImport(ctx, null, requestedSessionId);
+    let memoriesImported = 0;
+    let memoriesCwd = null;
+    if (cwd !== null) {
+      memoriesCwd = cwd;
+      const fs = ctx.get("fs");
+      if (fs !== void 0) {
+        try {
+          const target = await fs.resolve(MEMORY_DIR, { cwd });
+          const entries = await fs.listDir(target).catch(() => []);
+          memoriesImported = entries.filter((e) => e.type === "file" && /\.md$/i.test(e.name) && e.name !== "index.md").length;
+        } catch {
+          /* no memory dir yet */
+        }
+      }
+    }
+    out.memories = { imported: memoriesImported, total: report.memories.count, cwd: memoriesCwd };
+
+    // sessions: count persisted session-openclaw-* ids
+    let sessionsImported = 0;
+    const persistence = ctx.get("sessionPersistence");
+    if (persistence !== void 0) {
+      try {
+        const headers = await persistence.list();
+        sessionsImported = headers.filter((h) => h.id && typeof h.id === "string" && h.id.startsWith("session-openclaw-")).length;
+      } catch {
+        /* ignore */
+      }
+    }
+    out.sessions = { imported: sessionsImported, total: report.sessions.count };
+
+    sendJson(res, 200, out);
   }
 
   async function guide(ctx, req, res) {

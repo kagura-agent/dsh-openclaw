@@ -134,6 +134,16 @@ const call = async (path, body) => {
   const r = await call("/api/dsh-openclaw/scan", {});
   check(r.status === 200 && r.body.ok, "scan 200");
   check(r.body.memories.count === 1 && r.body.sessions.count === 2, "scan counts memories=1 sessions=2");
+  check(r.body.core.count === 5, "scan reports 5 persona core files");
+}
+
+// --- 1b. status: completion counts before any import -------------------------------
+{
+  const r = await call("/api/dsh-openclaw/status", {});
+  check(r.status === 200 && r.body.ok, "status 200");
+  check(r.body.core.imported === false && r.body.core.total === 5, "status: core not imported yet (fake HOME)");
+  check(r.body.memories.imported === 0 && r.body.memories.total === 1, "status: memories not imported yet");
+  check(r.body.sessions.imported === 0 && r.body.sessions.total === 2, "status: sessions not imported yet");
 }
 
 // --- 2. import-memories WITHOUT sessionId → legacy fallback (oldest live) ---------
@@ -210,6 +220,15 @@ const call = async (path, body) => {
   } finally {
     process.env.HOME = oldHome;
   }
+}
+
+// --- 7. status after ALL imports: counts reflect what was imported -------------------
+{
+  const r = await call("/api/dsh-openclaw/status", { sessionId: "session-current" });
+  check(r.status === 200 && r.body.ok, "status 200 after imports");
+  check(r.body.sessions.imported === 2, "status: both sessions counted as imported");
+  check(r.body.memories.imported === 1, "status: the current workspace memory/ holds 1 imported note");
+  check(r.body.core.imported === true, "status: core imported (fake HOME AGENTS.md carries marker)");
 }
 process.env.HOME = savedHome;
 

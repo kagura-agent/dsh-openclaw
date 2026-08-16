@@ -86,6 +86,7 @@ window.__ModuleLoader__.load({
 			const [sourceDir, setSourceDir] = react.useState("~/.openclaw");
 			const [busy, setBusy] = react.useState(null); // null | 'scan' | 'memories' | 'sessions' | 'core'
 			const [inventory, setInventory] = react.useState(null);
+			const [status, setStatus] = react.useState(null); // migration completion status
 			const [result, setResult] = react.useState(null); // { kind, ok, text }
 			const [showGuide, setShowGuide] = react.useState(false);
 			const [guide, setGuide] = react.useState(null);
@@ -123,6 +124,17 @@ window.__ModuleLoader__.load({
 				return data;
 			};
 
+			// Refresh the migration completion status (guards against a stale
+			// host that has no /status route yet — pre-restart compatibility).
+			const fetchStatus = async () => {
+				try {
+					const data = await post("/status", { sourceDir });
+					setStatus(data);
+				} catch {
+					setStatus(null);
+				}
+			};
+
 			const runScan = async () => {
 				setBusy("scan");
 				setResult(null);
@@ -145,6 +157,7 @@ window.__ModuleLoader__.load({
 					setResult({ kind: "err", text: error.message });
 				}
 				setBusy(null);
+				void fetchStatus();
 			};
 
 			const runMemories = async () => {
@@ -164,6 +177,7 @@ window.__ModuleLoader__.load({
 					setResult({ kind: "err", text: error.message });
 				}
 				setBusy(null);
+				void fetchStatus();
 			};
 
 			const runSessions = async () => {
@@ -188,6 +202,7 @@ window.__ModuleLoader__.load({
 					setResult({ kind: "err", text: error.message });
 				}
 				setBusy(null);
+				void fetchStatus();
 			};
 
 			const runCore = async () => {
@@ -206,6 +221,7 @@ window.__ModuleLoader__.load({
 					setResult({ kind: "err", text: error.message });
 				}
 				setBusy(null);
+				void fetchStatus();
 			};
 
 			const toggleGuide = async () => {
@@ -254,10 +270,23 @@ window.__ModuleLoader__.load({
 								onKeyDown: (e) => { if (e.key === "Enter") void runScan(); }
 							}),
 							react.createElement("button", { style: styles.btn, onClick: runScan, disabled: busy !== null }, "扫描")),
+						status !== null && inventory !== null &&
+							react.createElement("div", { style: { margin: "10px 0 2px", display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, fontWeight: 500 } },
+								react.createElement("span", { style: { color: status.core.imported ? "#1a7f37" : "#c0392b" } },
+									`人格 ${status.core.imported ? "✓" : status.core.total > 0 ? "未导入" : "—"}${status.core.total > 0 ? `（${status.core.total}）` : ""}`),
+								react.createElement("span", { style: { color: status.memories.imported >= status.memories.total && status.memories.total > 0 ? "#1a7f37" : "#c0392b" } },
+									`日记 ${status.memories.imported}/${status.memories.total}`),
+								react.createElement("span", { style: { color: status.sessions.imported >= status.sessions.total && status.sessions.total > 0 ? "#1a7f37" : "#c0392b" } },
+									`会话 ${status.sessions.imported}/${status.sessions.total}`)),
+						react.createElement("div", { style: { fontSize: 12, color: "#8a94a3", margin: "2px 0 8px" } },
+							"迁移顺序：① 人格（全局注入，所有工作区生效）→ ② 日记（当前工作区 memory/）→ ③ 会话（DSH 会话库）"),
 						react.createElement("div", { style: styles.row },
-							react.createElement("button", { style: styles.btnPrimary, onClick: runCore, disabled: busy !== null }, "导入人格 → ~/.dsh/AGENTS.md"),
-							react.createElement("button", { style: styles.btnPrimary, onClick: runMemories, disabled: busy !== null }, "导入记忆"),
-							react.createElement("button", { style: styles.btnPrimary, onClick: runSessions, disabled: busy !== null }, "导入会话"),
+							react.createElement("button", { style: styles.btnPrimary, onClick: runCore, disabled: busy !== null },
+								`① 导入人格${status && status.core.imported ? " ✓" : ""}`),
+							react.createElement("button", { style: styles.btnPrimary, onClick: runMemories, disabled: busy !== null },
+								`② 导入日记${status && status.memories.total > 0 && status.memories.imported >= status.memories.total ? " ✓" : ""}`),
+							react.createElement("button", { style: styles.btnPrimary, onClick: runSessions, disabled: busy !== null },
+								`③ 导入会话${status && status.sessions.total > 0 && status.sessions.imported >= status.sessions.total ? " ✓" : ""}`),
 							react.createElement("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 12 } },
 								react.createElement("input", {
 									type: "checkbox",
