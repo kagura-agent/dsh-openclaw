@@ -276,8 +276,10 @@ window.__ModuleLoader__.load({
 									`人格 ${status.core.imported ? "✓" : status.core.total > 0 ? "未导入" : "—"}${status.core.total > 0 ? `（${status.core.total}）` : ""}`),
 								react.createElement("span", { style: { color: status.memories.imported >= status.memories.total && status.memories.total > 0 ? "#1a7f37" : "#c0392b" } },
 									`日记 ${status.memories.imported}/${status.memories.total}`),
-								react.createElement("span", { style: { color: status.sessions.imported >= status.sessions.total && status.sessions.total > 0 ? "#1a7f37" : "#c0392b" } },
-									`会话 ${status.sessions.imported}/${status.sessions.total}`)),
+								react.createElement("span", { style: { color: status.sessions.total > 0 ? (status.sessions.imported >= status.sessions.total ? "#1a7f37" : "#c0392b") : status.sessions.imported > 0 ? "#1a7f37" : "#8a94a3" } },
+									status.sessions.total > 0
+										? `会话 ${status.sessions.imported}/${status.sessions.total}`
+										: `会话 ${status.sessions.imported}（源无会话记录）`)),
 						react.createElement("div", { style: { fontSize: 12, color: "#8a94a3", margin: "2px 0 8px" } },
 							"迁移顺序：① 人格（全局注入，所有工作区生效）→ ② 日记（当前工作区 memory/）→ ③ 会话（DSH 会话库）"),
 						react.createElement("div", { style: styles.row },
