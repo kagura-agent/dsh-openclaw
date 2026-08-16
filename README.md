@@ -1,6 +1,6 @@
-# dsh-openclaw
+# dsh-migrate-openclaw
 
-**OpenClaw → DeepSeek Harness migration plugin**: scan an OpenClaw data directory and move long-term memory and session history into DSH. Installed on the dsh web profile, it adds a "dsh-openclaw" card to the settings page — fully browser-driven, no CLI needed.
+**OpenClaw → DeepSeek Harness migration plugin**: scan an OpenClaw data directory and move long-term memory and session history into DSH. Installed on the dsh web profile, it adds a "dsh-migrate-openclaw" card to the settings page — fully browser-driven, no CLI needed.
 
 [中文版](README.zh.md)
 
@@ -23,7 +23,7 @@ In OpenClaw, an agent's "chemistry" lives mostly in the workspace files `SOUL.md
 ## Install
 
 ```sh
-dsh plugin --profile web add /path/to/dsh-openclaw
+dsh plugin --profile web add /path/to/dsh-migrate-openclaw
 ```
 
 Then append to `$DSH_HOME/profiles/web/cordis.patch.yml`:
@@ -31,7 +31,7 @@ Then append to `$DSH_HOME/profiles/web/cordis.patch.yml`:
 ```yaml
 - insert:
     - id: openclaw
-      name: 'dsh-openclaw'
+      name: 'dsh-migrate-openclaw'
       config:
         # Default source directory to scan (the card can override it per run)
         defaultSourceDir: '~/.openclaw'
@@ -43,7 +43,7 @@ Config changes apply live via HMR — no restart needed for config.
 
 ## Usage
 
-1. Open dsh Web → Settings → plugin config → **dsh-openclaw**.
+1. Open dsh Web → Settings → plugin config → **dsh-migrate-openclaw**.
 2. Confirm the source directory (default `~/.openclaw`; point it at a copied export directory for cross-machine migration).
 3. **Scan** → see how many daily notes / sessions / persona core files were found.
 4. **① Import persona → `~/.dsh/AGENTS.md`** → persona core goes to the DSH global instruction layer, injected into every new workspace session.

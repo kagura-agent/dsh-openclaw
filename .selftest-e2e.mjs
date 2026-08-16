@@ -30,7 +30,7 @@ const check = (cond, label) => {
 };
 
 // --- scratch layout (real files under a temp dir) -----------------------------
-const root = join(tmpdir(), "dsh-openclaw-e2e-" + randomBytes(4).toString("hex"));
+const root = join(tmpdir(), "dsh-migrate-openclaw-e2e-" + randomBytes(4).toString("hex"));
 const srcDir = join(root, "openclaw-src");
 const wsCurrent = join(root, "ws-current");  // the card's live session workspace
 const wsOldest = join(root, "ws-oldest");    // an OLDER live session workspace (list()[0])
@@ -131,7 +131,7 @@ const call = async (path, body) => {
 
 // --- 1. scan ---------------------------------------------------------------------
 {
-  const r = await call("/api/dsh-openclaw/scan", {});
+  const r = await call("/api/dsh-migrate-openclaw/scan", {});
   check(r.status === 200 && r.body.ok, "scan 200");
   check(r.body.memories.count === 1 && r.body.sessions.count === 2, "scan counts memories=1 sessions=2");
   check(r.body.core.count === 5, "scan reports 5 persona core files");
@@ -139,7 +139,7 @@ const call = async (path, body) => {
 
 // --- 1b. status: completion counts before any import -------------------------------
 {
-  const r = await call("/api/dsh-openclaw/status", {});
+  const r = await call("/api/dsh-migrate-openclaw/status", {});
   check(r.status === 200 && r.body.ok, "status 200");
   check(r.body.core.imported === false && r.body.core.total === 5, "status: core not imported yet (fake HOME)");
   check(r.body.memories.imported === 0 && r.body.memories.total === 1, "status: memories not imported yet");
@@ -148,7 +148,7 @@ const call = async (path, body) => {
 
 // --- 2. import-memories WITHOUT sessionId → legacy fallback (oldest live) ---------
 {
-  const r = await call("/api/dsh-openclaw/import-memories", {});
+  const r = await call("/api/dsh-migrate-openclaw/import-memories", {});
   check(r.status === 200 && r.body.ok, "import-memories 200");
   check(r.body.cwd === wsOldest, "memories fall back to OLDEST live session without sessionId");
   check(existsSync(join(wsOldest, "memory", "约定.md")), "memory file written under fallback cwd");
@@ -157,7 +157,7 @@ const call = async (path, body) => {
 
 // --- 3. import-memories WITH sessionId → lands in the card's workspace -------------
 {
-  const r = await call("/api/dsh-openclaw/import-memories", { sessionId: "session-current" });
+  const r = await call("/api/dsh-migrate-openclaw/import-memories", { sessionId: "session-current" });
   check(r.status === 200 && r.body.ok, "import-memories (with sessionId) 200");
   check(r.body.cwd === wsCurrent, "memories land in the session named by sessionId");
   check(existsSync(join(wsCurrent, "memory", "约定.md")), "memory file written under sessionId cwd");
@@ -166,7 +166,7 @@ const call = async (path, body) => {
 
 // --- 4. import-sessions: cwd by sessionId + .gz decompression ----------------------
 {
-  const r = await call("/api/dsh-openclaw/import-sessions", { sessionId: "session-current" });
+  const r = await call("/api/dsh-migrate-openclaw/import-sessions", { sessionId: "session-current" });
   check(r.status === 200 && r.body.ok, "import-sessions 200");
   check(r.body.imported.length === 2, "both plain .jsonl and .jsonl.gz import");
   const alpha = r.body.imported.find((s) => s.source === "alpha.jsonl");
@@ -179,7 +179,7 @@ const call = async (path, body) => {
 // --- 5. idempotent re-import: same ids are skipped, not failed ----------------------
 {
   const before = created.length;
-  const r = await call("/api/dsh-openclaw/import-sessions", { sessionId: "session-current" });
+  const r = await call("/api/dsh-migrate-openclaw/import-sessions", { sessionId: "session-current" });
   check(r.status === 200 && r.body.ok, "re-import 200");
   check(r.body.imported.length === 0, "re-import imports nothing new");
   check(r.body.skipped.length === 2, "re-import skips both already-imported sessions");
@@ -189,19 +189,19 @@ const call = async (path, body) => {
 
 // --- 6. import-core: persona files → fake ~/.dsh/AGENTS.md ---------------------
 {
-  const r = await call("/api/dsh-openclaw/import-core", {});
+  const r = await call("/api/dsh-migrate-openclaw/import-core", {});
   check(r.status === 200 && r.body.ok, "import-core 200");
   check(r.body.files.length === 5, "import-core found all 5 persona files");
   const target = join(fakeHome, ".dsh", "AGENTS.md");
   check(existsSync(target), "wrote ~/.dsh/AGENTS.md under fake HOME");
   const text = readFileSync(target, "utf8");
-  check(text.includes("由 dsh-openclaw 生成"), "generated marker present");
+  check(text.includes("由 dsh-migrate-openclaw 生成"), "generated marker present");
   check(text.includes("# IDENTITY.md") && text.includes("# SOUL.md") && text.includes("# USER.md")
     && text.includes("# AGENTS.md") && text.includes("# MEMORY.md"), "all persona sections assembled in order");
   check(text.includes("北极星:人类伴侣"), "MEMORY.md content included");
 
   // re-import: target already carries our marker → overwrite WITHOUT backup
-  const r2 = await call("/api/dsh-openclaw/import-core", {});
+  const r2 = await call("/api/dsh-migrate-openclaw/import-core", {});
   check(r2.status === 200 && r2.body.ok && r2.body.backedUp === false, "re-import overwrites without backup");
 
   // a hand-edited target (no marker) → backed up before overwrite
@@ -213,7 +213,7 @@ const call = async (path, body) => {
     const manual = join(backupable, ".dsh");
     mkdirSync(manual, { recursive: true });
     writeFileSync(join(manual, "AGENTS.md"), "# hand-written instructions\n");
-    const r3 = await call("/api/dsh-openclaw/import-core", {});
+    const r3 = await call("/api/dsh-migrate-openclaw/import-core", {});
     check(r3.status === 200 && r3.body.backedUp === true, "hand-edited target backed up before overwrite");
     const backups = readdirSync(manual).filter((n) => n.startsWith("AGENTS.md.bak-"));
     check(backups.length === 1, "one backup file created");
@@ -224,7 +224,7 @@ const call = async (path, body) => {
 
 // --- 7. status after ALL imports: counts reflect what was imported -------------------
 {
-  const r = await call("/api/dsh-openclaw/status", { sessionId: "session-current" });
+  const r = await call("/api/dsh-migrate-openclaw/status", { sessionId: "session-current" });
   check(r.status === 200 && r.body.ok, "status 200 after imports");
   check(r.body.sessions.imported === 2, "status: both sessions counted as imported");
   check(r.body.memories.imported === 1, "status: the current workspace memory/ holds 1 imported note");

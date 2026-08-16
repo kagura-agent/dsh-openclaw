@@ -1,11 +1,11 @@
-# Contributing to dsh-openclaw
+# Contributing to dsh-migrate-openclaw
 
 Thanks for considering a contribution! This is a small, focused plugin, so the
 bar is: **working code, honest tests, clean copy.**
 
 ## Project shape
 
-- `src/index.js` — host half: the `/api/dsh-openclaw/*` routes (scan, status,
+- `src/index.js` — host half: the `/api/dsh-migrate-openclaw/*` routes (scan, status,
   import-core / import-memories / import-sessions, guide) and the OpenClaw /
   Claude Code SDK JSONL converters.
 - `src/client.js` — browser half: the settings-page migration card. All

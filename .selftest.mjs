@@ -1,4 +1,4 @@
-// Self-test for the dsh-openclaw session converter: feed realistic
+// Self-test for the dsh-migrate-openclaw session converter: feed realistic
 // Claude Code SDK JSONL and check the emitted DSH event log invariants.
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -86,7 +86,7 @@ check(transcript.includes("**user**") && transcript.includes("**assistant**") &&
 
 // --- memory parsing ---------------------------------------------------------
 import { writeFileSync, mkdirSync } from "node:fs";
-const memDir = join(tmpdir(), "dsh-openclaw-selftest-" + Date.now());
+const memDir = join(tmpdir(), "dsh-migrate-openclaw-selftest-" + Date.now());
 mkdirSync(memDir, { recursive: true });
 const mem = parseMemoryFile(join(memDir, "README.md"), 0);
 writeFileSync(join(memDir, "README.md"), "# 测试 README\n\n内容");

@@ -1,5 +1,5 @@
 {
-  "name": "dsh-openclaw",
+  "name": "dsh-migrate-openclaw",
   "version": "0.2.0",
   "description": "DSH plugin: migrate OpenClaw data into DeepSeek Harness — scan an OpenClaw data directory, import the persona core into the global instruction layer, memories as workspace Markdown with an index, and sessions as native DSH session logs.",
   "type": "module",

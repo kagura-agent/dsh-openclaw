@@ -1,4 +1,4 @@
-// dsh-openclaw host half — OpenClaw → DSH migration.
+// dsh-migrate-openclaw host half — OpenClaw → DSH migration.
 //
 // Scans an OpenClaw data directory (default ~/.openclaw, configurable, and
 // usable on a copied export directory for cross-machine migration) and
@@ -12,11 +12,11 @@
 //                 otherwise the current session's workspace is used.
 //
 // Routes (all POST, JSON):
-//   /api/dsh-openclaw/scan              {sourceDir?} → inventory
-//   /api/dsh-openclaw/import-memories   {sourceDir?, targetDir?} → {imported, skipped, failed}
-//   /api/dsh-openclaw/import-sessions   {sourceDir?, sessionIds?, asTranscript?} → {imported, failed}
-//   /api/dsh-openclaw/guide             {} → the command to run on the OpenClaw machine
-const name = "dsh-openclaw";
+//   /api/dsh-migrate-openclaw/scan              {sourceDir?} → inventory
+//   /api/dsh-migrate-openclaw/import-memories   {sourceDir?, targetDir?} → {imported, skipped, failed}
+//   /api/dsh-migrate-openclaw/import-sessions   {sourceDir?, sessionIds?, asTranscript?} → {imported, failed}
+//   /api/dsh-migrate-openclaw/guide             {} → the command to run on the OpenClaw machine
+const name = "dsh-migrate-openclaw";
 const inject = ["webServer", "sessions", "sessionQuery", "sessionPersistence", "workspaceRegistry", "fs"];
 
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
@@ -26,7 +26,7 @@ import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 
-const API_PREFIX = "/api/dsh-openclaw";
+const API_PREFIX = "/api/dsh-migrate-openclaw";
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_SCAN_FILES = 1000;
 const DEFAULT_MAX_SESSIONS = 200;
@@ -38,7 +38,7 @@ const ARCHIVE_DIR = "archive/openclaw";
 // OpenClaw persona core files that make up the global instruction layer.
 const CORE_NAMES = ["IDENTITY.md", "SOUL.md", "USER.md", "AGENTS.md", "MEMORY.md"];
 const CORE_ORDER = ["IDENTITY.md", "SOUL.md", "USER.md", "AGENTS.md", "MEMORY.md"];
-const GENERATED_MARKER = "由 dsh-openclaw 生成";
+const GENERATED_MARKER = "由 dsh-migrate-openclaw 生成";
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -190,7 +190,7 @@ function buildMemoryIndex(entries) {
   const lines = [
     "# OpenClaw 记忆索引",
     "",
-    "> 由 dsh-openclaw 从 OpenClaw `memories/` 目录导入。共 " + entries.length + " 条记忆。",
+    "> 由 dsh-migrate-openclaw 从 OpenClaw `memories/` 目录导入。共 " + entries.length + " 条记忆。",
     "",
     "| 标题 | 标签 | 文件 | 摘要 |",
     "| --- | --- | --- | --- |",
@@ -512,7 +512,7 @@ function convertSession(records, sessionId, fallbackCwd) {
 
 /** Render a human-readable markdown transcript of one session (archive copy). */
 function renderTranscript(records, title) {
-  const lines = [`# ${title}`, "", "> 由 dsh-openclaw 从 OpenClaw 会话导入（Markdown 存档，非 DSH 原生会话）。", ""];
+  const lines = [`# ${title}`, "", "> 由 dsh-migrate-openclaw 从 OpenClaw 会话导入（Markdown 存档，非 DSH 原生会话）。", ""];
   for (const record of records) {
     if (record.role === "assistant") {
       const text = textOfBlocks(record.content);
@@ -749,7 +749,7 @@ function apply(ctx, config) {
           sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
         }
       }
-    }), `dsh-openclaw: ${route.path}`);
+    }), `dsh-migrate-openclaw: ${route.path}`);
   }
 
   async function scan(ctx, req, res) {

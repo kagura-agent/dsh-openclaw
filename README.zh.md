@@ -1,9 +1,9 @@
-# dsh-openclaw
+# dsh-migrate-openclaw
 
 [English](README.md)
 
 **OpenClaw → DeepSeek Harness 迁移插件**：扫描 OpenClaw 数据目录，把长期记忆和会话历史搬进 DSH。
-装在 dsh web profile 上，设置页出现「dsh-openclaw」卡片，全程浏览器操作，无需命令行。
+装在 dsh web profile 上，设置页出现「dsh-migrate-openclaw」卡片，全程浏览器操作，无需命令行。
 
 ## 功能
 
@@ -24,7 +24,7 @@ OpenClaw 里一个 agent 的"默契"主要由 workspace 的 `SOUL.md`（人格/�
 ## 安装
 
 ```sh
-dsh plugin --profile web add /path/to/dsh-openclaw
+dsh plugin --profile web add /path/to/dsh-migrate-openclaw
 ```
 
 然后在 `$DSH_HOME/profiles/web/cordis.patch.yml` 追加：
@@ -32,7 +32,7 @@ dsh plugin --profile web add /path/to/dsh-openclaw
 ```yaml
 - insert:
     - id: openclaw
-      name: 'dsh-openclaw'
+      name: 'dsh-migrate-openclaw'
       config:
         # 默认扫描的源目录（界面可临时改）
         defaultSourceDir: '~/.openclaw'
@@ -44,7 +44,7 @@ dsh plugin --profile web add /path/to/dsh-openclaw
 
 ## 使用
 
-1. 打开 dsh Web → 设置 → 插件配置 → **dsh-openclaw**。
+1. 打开 dsh Web → 设置 → 插件配置 → **dsh-migrate-openclaw**。
 2. 确认源目录（默认 `~/.openclaw`；跨机器迁移时指向拷贝过来的导出目录）。
 3. **扫描** → 查看发现了多少记忆/会话/人格核心。
 4. **导入人格 → `~/.dsh/AGENTS.md`** → 人格核心写入 DSH 全局指令层，所有 workspace 的新会话自动注入。

@@ -1,24 +1,24 @@
-// dsh-openclaw client half — migration card in the settings plugin list.
+// dsh-migrate-openclaw client half — migration card in the settings plugin list.
 //
 // A single card with: source-directory input (default ~/.openclaw), persona /
 // memory / session import actions, a per-run result summary, and a collapsible
 // cross-machine export guide. All work happens through the host half's
-// /api/dsh-openclaw/* routes; a dsh-web-auth deployment gates those routes
+// /api/dsh-migrate-openclaw/* routes; a dsh-web-auth deployment gates those routes
 // behind the password cookie like every other /api route.
 // UI copy is localized through the host locale service (en + zh dictionaries).
 window.__ModuleLoader__.load({
-	id: "dsh-openclaw",
+	id: "dsh-migrate-openclaw",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
 		var react = require("react");
 
-		const name = "dsh-openclaw-client";
+		const name = "dsh-migrate-openclaw-client";
 		const inject = ["slots", "sessions", "locale"];
 
-		const API = "/api/dsh-openclaw";
+		const API = "/api/dsh-migrate-openclaw";
 		/** Locale namespace owning this card's copy. */
-		const NS = "dsh-openclaw";
+		const NS = "dsh-migrate-openclaw";
 		/** Simplified Chinese copy. */
 		const zh = {
 			subtitle: "OpenClaw → DSH 迁移：人格 + 记忆 + 会话导入",
@@ -365,13 +365,13 @@ window.__ModuleLoader__.load({
 				react.createElement("article", { style: styles.article },
 					react.createElement("button", {
 						type: "button",
-						"aria-label": `${open ? t("collapse") : t("expand")}: dsh-openclaw`,
+						"aria-label": `${open ? t("collapse") : t("expand")}: dsh-migrate-openclaw`,
 						"aria-expanded": open,
 						onClick: () => setOpen(!open),
 						style: styles.headerBtn
 					},
 						react.createElement("div", { style: { flex: 1, minWidth: 0 } },
-							react.createElement("div", { style: { fontSize: 15, fontWeight: 600 } }, "dsh-openclaw"),
+							react.createElement("div", { style: { fontSize: 15, fontWeight: 600 } }, "dsh-migrate-openclaw"),
 							react.createElement("div", { style: { fontSize: 13, color: "#8a94a3", marginTop: 2 } }, t("subtitle"))),
 						react.createElement("span", {
 							style: {
@@ -445,10 +445,10 @@ window.__ModuleLoader__.load({
 			if (slots === void 0) return;
 			const locale = ctx.get("locale");
 			if (locale !== void 0) {
-				ctx.effect(() => locale.register(NS, { zh, en }), "dsh-openclaw: card dictionaries");
+				ctx.effect(() => locale.register(NS, { zh, en }), "dsh-migrate-openclaw: card dictionaries");
 			}
 			slots.inject("settings.plugin.item", () => slots.register(
-				{ name: "settings.plugin.item", id: "dsh-openclaw", order: 40, label: "dsh-openclaw" },
+				{ name: "settings.plugin.item", id: "dsh-migrate-openclaw", order: 40, label: "dsh-migrate-openclaw" },
 				() => react.createElement(OpenClawCard, { ctx })
 			));
 		}
