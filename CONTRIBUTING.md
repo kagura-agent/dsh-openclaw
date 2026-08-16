@@ -21,7 +21,8 @@ bar is: **working code, honest tests, clean copy.**
 
 ```sh
 node --check src/index.js && node --check src/client.js
-node .selftest.mjs       # session conversion (SDK + OpenClaw formats), memory parsing
+node .selftest-client.mjs  # client static checks (i18n keys, helper references)
+node .selftest.mjs         # session conversion (SDK + OpenClaw formats), memory parsing
 node .selftest-e2e.mjs   # route-level integration tests
 ```
 
