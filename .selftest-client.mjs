@@ -64,28 +64,71 @@ for (const key of usedKeys) {
 check(paramMismatch === 0, "placeholder params match between zh and en");
 
 // --- 2. internal reference integrity ------------------------------------------
-// Helpers that are called somewhere in the file must be defined. Build the set
-// of defined names from const/function declarations, then verify every CALL
-// site (identifier followed by `(`) that matches a known helper name is defined.
+// Every identifier referenced outside strings/comments must be either defined
+// in this file (const/function declarations, destructured state names) or a
+// known global. This catches the "newName deleted but the input still binds
+// to it" class of regression — far stronger than checking a helper list.
 const defined = new Set();
 for (const m of src.matchAll(/(?:const|function|var|let)\s+([A-Za-z_$][\w$]*)\s*=/g)) defined.add(m[1]);
 for (const m of src.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(/g)) defined.add(m[1]);
-
-// Candidate helper names that a component might call; we flag calls to any of
-// these that have no definition. (Broad enough to catch deleted helpers.)
-const helperCandidates = [
-  "post", "fetchStatus", "currentSessionId",
-  "runScan", "runMemories", "runSessions", "runCore", "toggleGuide"
-];
-let undef = 0;
-for (const name of helperCandidates) {
-  // called at least once (name followed by `(`), and not defined
-  if (new RegExp(`\\b${name}\\s*\\(`).test(src) && !defined.has(name)) {
-    undef += 1;
-    console.log(`FAIL  "${name}" is called but never defined`);
+// destructured state: const [a, setA] = react.useState(...) / useRef / useReducer
+for (const m of src.matchAll(/const\s*\[([^\]]+)\]\s*=\s*react\.use/g)) {
+  for (const name of m[1].split(",").map((x) => x.trim()).filter(Boolean)) {
+    if (/^[A-Za-z_$][\w$]*$/.test(name)) defined.add(name);
   }
 }
-check(undef === 0, "every called helper is defined");
+// function parameters (incl. destructured { ctx, wide }) and arrow params
+const addParams = (list) => {
+  for (const id of list.matchAll(/[A-Za-z_$][\w$]*/g)) defined.add(id[0]);
+};
+for (const m of src.matchAll(/\(([^()]*)\)\s*=>/g)) addParams(m[1]);
+for (const m of src.matchAll(/function\s+[A-Za-z_$][\w$]*\s*\(([^()]*)\)/g)) addParams(m[1]);
+// class declarations and lifecycle-method parameters
+for (const m of src.matchAll(/class\s+([A-Za-z_$][\w$]*)/g)) defined.add(m[1]);
+for (const m of src.matchAll(/(?:constructor|render|componentDidCatch|getDerivedStateFromError|componentDidMount|componentWillUnmount)\s*\(([^()]*)\)/g)) addParams(m[1]);
+
+// Known globals the bundle may touch (browser + host-injected + react).
+const GLOBALS = new Set([
+  "window", "document", "fetch", "URL", "console", "JSON", "Date", "Math",
+  "setInterval", "setTimeout", "clearInterval", "encodeURIComponent",
+  "location", "File", "Blob", "confirm", "alert", "Object", "Array",
+  "String", "Number", "Boolean", "Promise", "Error", "RegExp", "Map", "Set",
+  "React", "react", "createElement", "Fragment", "Component", "useState",
+  "useEffect", "useReducer", "useRef", "require", "module", "exports",
+  "__ModuleLoader__", "api", "API", "NS", "styles", "zh", "en",
+  "name", "inject", "apply", "props", "error",
+  "constructor", "render", "componentDidCatch", "getDerivedStateFromError",
+  "componentDidMount", "componentWillUnmount", "shouldComponentUpdate", "super"
+]);
+const KEYWORDS = new Set([
+  "var", "let", "const", "function", "return", "if", "else", "for", "while",
+  "do", "switch", "case", "break", "continue", "new", "typeof", "instanceof",
+  "in", "of", "this", "null", "undefined", "true", "false", "class", "extends",
+  "super", "import", "export", "default", "try", "catch", "finally", "throw",
+  "delete", "void", "yield", "await", "async", "static", "get", "set"
+]);
+
+// Strip comments, string/template literals, and object PROPERTY names
+// ({ subtitle: ... }, { onClick: ... }) so only real references remain.
+const stripped = src
+  .replace(/\/\/.*$/gm, "")
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, " ")
+  .replace(/'[^'\\]*(?:\\.[^'\\]*)*'/g, " ")
+  .replace(/`[^`\\]*(?:\\.[^`\\]*)*`/g, " ")
+  .replace(/([{,]\s*)([A-Za-z_$][\w$]*)(\s*:)/g, "$1 $3")
+  .replace(/\.\s*[A-Za-z_$][\w$]*/g, "");
+
+const identifiers = new Set([...stripped.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map((m) => m[1]));
+let undef = [];
+for (const id of identifiers) {
+  if (GLOBALS.has(id)) continue;
+  if (KEYWORDS.has(id)) continue;
+  if (defined.has(id)) continue;
+  if (id.length < 2) continue;
+  undef.push(id);
+}
+check(undef.length === 0, `every referenced identifier is defined${undef.length > 0 ? " (missing: " + undef.slice(0, 12).join(", ") + ")" : ""}`);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
