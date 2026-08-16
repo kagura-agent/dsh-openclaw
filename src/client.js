@@ -129,12 +129,15 @@ window.__ModuleLoader__.load({
 				try {
 					const data = await post("/scan", { sourceDir });
 					setInventory(data);
+					// `core` may be absent when talking to an older host (pre-restart);
+					// guard every field so a stale host cannot break the card.
+					const core = data.core && typeof data.core === "object" ? data.core : null;
 					setResult({
 						kind: "ok",
 						text:
 							`记忆 ${data.memories.count} 个（${data.memories.sizeLabel}）` +
 							` · 会话 ${data.sessions.count} 个（${data.sessions.sizeLabel}）` +
-							(data.core.count > 0 ? ` · 人格核心 ${data.core.count} 个（${data.core.files.map((f) => f.name.replace(/\.md$/i, "")).join("/")}）` : "") +
+							(core && core.count > 0 ? ` · 人格核心 ${core.count} 个（${core.files.map((f) => f.name.replace(/\.md$/i, "")).join("/")}）` : "") +
 							(data.config ? ` · 配置 ${data.config.name}` : "") +
 							(data.plugins.count > 0 ? ` · 插件 ${data.plugins.count} 个（仅清单）` : "")
 					});
