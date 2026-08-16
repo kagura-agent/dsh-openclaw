@@ -4,3 +4,6 @@ node_modules/
 
 # e2e test fixtures
 .e2e/
+
+# imported OpenClaw daily notes (data, not code)
+memory/
