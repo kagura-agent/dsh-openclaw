@@ -119,16 +119,71 @@ const stripped = src
   .replace(/([{,]\s*)([A-Za-z_$][\w$]*)(\s*:)/g, "$1 $3")
   .replace(/\.\s*[A-Za-z_$][\w$]*/g, "");
 
-const identifiers = new Set([...stripped.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map((m) => m[1]));
-let undef = [];
-for (const id of identifiers) {
-  if (GLOBALS.has(id)) continue;
-  if (KEYWORDS.has(id)) continue;
-  if (defined.has(id)) continue;
-  if (id.length < 2) continue;
-  undef.push(id);
+// Scope-aware check: split the file into top-level function bodies and check
+// each body's references against (module-level definitions + that body's own
+// definitions + params + globals). This catches a helper defined in ONE
+// component but used in ANOTHER (the "post defined in badge, called in card"
+// class) — the file-wide check above cannot.
+function splitTopFunctions(code) {
+  // top-level functions/classes start at two tabs inside the ModuleLoader factory
+  const parts = [];
+  const re = /^\t\t(?:function|class)\s+([A-Za-z_$][\w$]*)/gm;
+  let last = null;
+  let m;
+  while ((m = re.exec(code)) !== null) {
+    if (last) parts.push({ name: last.name, body: code.slice(last.start, m.index) });
+    last = { name: m[1], start: m.index };
+  }
+  if (last) parts.push({ name: last.name, body: code.slice(last.start) });
+  return parts;
 }
-check(undef.length === 0, `every referenced identifier is defined${undef.length > 0 ? " (missing: " + undef.slice(0, 12).join(", ") + ")" : ""}`);
+
+// module-level definitions: two-tab consts (zh/en/styles/API/post/NS/...) and
+// everything already collected in `defined` that sits outside a function body
+const moduleLevel = new Set(defined);
+for (const part of splitTopFunctions(src)) {
+  // remove names that are defined INSIDE a function from module-level visibility
+  // (approximation: a name defined at two-tab scope is module-level)
+}
+const moduleConst = new Set();
+for (const m of src.matchAll(/^\t\t(?:const|function|class)\s+([A-Za-z_$][\w$]*)/gm)) moduleConst.add(m[1]);
+
+let undef = [];
+for (const part of splitTopFunctions(src)) {
+  const rawBody = part.body;
+  // Definitions are extracted from the RAW body (member-access stripping would
+  // destroy `react.useState`, breaking destructured-state extraction).
+  const local = new Set();
+  for (const m of rawBody.matchAll(/(?:const|function|var|let)\s+([A-Za-z_$][\w$]*)\s*=/g)) local.add(m[1]);
+  for (const m of rawBody.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(/g)) local.add(m[1]);
+  for (const m of rawBody.matchAll(/const\s*\[([^\]]+)\]\s*=\s*react\.use/g)) {
+    for (const n of m[1].split(",").map((x) => x.trim()).filter(Boolean)) if (/^[A-Za-z_$][\w$]*$/.test(n)) local.add(n);
+  }
+  for (const m of rawBody.matchAll(/\(([^()]*)\)\s*=>/g)) for (const n of m[1].matchAll(/[A-Za-z_$][\w$]*/g)) local.add(n[0]);
+  for (const m of rawBody.matchAll(/function\s+[A-Za-z_$][\w$]*\s*\(([^()]*)\)/g)) for (const n of m[1].matchAll(/[A-Za-z_$][\w$]*/g)) local.add(n[0]);
+  for (const m of rawBody.matchAll(/(?:constructor|render|componentDidCatch|getDerivedStateFromError)\s*\(([^()]*)\)/g)) for (const n of m[1].matchAll(/[A-Za-z_$][\w$]*/g)) local.add(n[0]);
+  for (const m of rawBody.matchAll(/class\s+([A-Za-z_$][\w$]*)/g)) local.add(m[1]);
+  // a function's own destructured params: function Name({ ctx, wide })
+  for (const m of rawBody.matchAll(/function\s+[A-Za-z_$][\w$]*\s*\(([^()]*)\)/g)) for (const n of m[1].matchAll(/[A-Za-z_$][\w$]*/g)) local.add(n[0]);
+
+  const body = rawBody
+    .replace(/\/\/.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, " ")
+    .replace(/'[^'\\]*(?:\\.[^'\\]*)*'/g, " ")
+    .replace(/`[^`\\]*(?:\\.[^`\\]*)*`/g, " ")
+    .replace(/([{,]\s*)([A-Za-z_$][\w$]*)(\s*:)/g, "$1 $3")
+    .replace(/\.\s*[A-Za-z_$][\w$]*/g, "");
+
+  const refs = new Set([...body.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map((x) => x[1]));
+  for (const id of refs) {
+    if (GLOBALS.has(id) || KEYWORDS.has(id)) continue;
+    if (moduleConst.has(id) || local.has(id)) continue;
+    if (id.length < 2) continue;
+    undef.push(`${id} (in ${part.name})`);
+  }
+}
+check(undef.length === 0, `every reference is defined in scope${undef.length > 0 ? " (missing: " + undef.slice(0, 12).join(", ") + ")" : ""}`);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
