@@ -1,0 +1,23 @@
+{
+  "name": "dsh-openclaw",
+  "version": "0.1.0",
+  "description": "DSH plugin: migrate OpenClaw data into DeepSeek Harness — scan an OpenClaw data directory, import memories as workspace Markdown with an index, and import sessions as native DSH session logs.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [],
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "license": "MIT"
+}
